@@ -1,44 +1,63 @@
-FROM node:lts AS builder
-
-# Set the working directory inside the container
-WORKDIR /app
+FROM node:18-slim AS builder
 
 RUN apt-get update && \
-    apt-get install -y build-essential python3
+    apt-get install -y --no-install-recommends openssl python3 make g++ && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy the package.json and package-lock.json files for both apps
-COPY apps/api/package*.json ./apps/api/
-COPY apps/client/package*.json ./apps/client/
-COPY ./ecosystem.config.js ./ecosystem.config.js
+WORKDIR /app
 
-RUN npm i -g prisma
-RUN npm i -g typescript@latest -g --force 
+COPY package.json yarn.lock .yarnrc.yml turbo.json ./
+COPY apps/api/package.json    ./apps/api/
+COPY apps/client/package.json ./apps/client/
+COPY packages/                ./packages/
+COPY ecosystem.config.js      ./
 
-# Copy the source code for both apps
-COPY apps/api ./apps/api
+RUN corepack enable && yarn install --mode=skip-build
+
+COPY apps/api    ./apps/api
 COPY apps/client ./apps/client
 
-RUN cd apps/api && npm install --production
-RUN cd apps/api && npm i --save-dev @types/node && npm run build
-
-RUN cd apps/client && yarn install --production --ignore-scripts --prefer-offline --network-timeout 1000000
-RUN cd apps/client && yarn add --dev typescript @types/node --network-timeout 1000000
+RUN cd apps/api && yarn prisma generate
+RUN cd apps/api && yarn build
 RUN cd apps/client && yarn build
 
-FROM node:lts AS runner
+# ── Runner ────────────────────────────────────────────────────
+FROM node:18-slim AS runner
 
-COPY --from=builder /app/apps/api/ ./apps/api/
-COPY --from=builder /app/apps/client/.next/standalone ./apps/client
-COPY --from=builder /app/apps/client/.next/static ./apps/client/.next/static
-COPY --from=builder /app/apps/client/public ./apps/client/public
-COPY --from=builder /app/ecosystem.config.js ./ecosystem.config.js
+# ต้องมี build tools ใน runner ด้วย เพราะต้อง rebuild native addons
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        openssl python3 make g++ && \
+    rm -rf /var/lib/apt/lists/*
 
-# Expose the ports for both apps
-EXPOSE 3000 5003
+WORKDIR /app
 
-# Install PM2 globally
 RUN npm install -g pm2
 
-# Start both apps using PM2
-CMD ["pm2-runtime", "ecosystem.config.js"]
+# Copy root package manifests + lockfile สำหรับ npm rebuild
+COPY --from=builder /app/package.json    ./package.json
+COPY --from=builder /app/yarn.lock       ./yarn.lock
+COPY --from=builder /app/.yarnrc.yml     ./.yarnrc.yml
 
+# API
+COPY --from=builder /app/apps/api/dist         ./apps/api/dist
+COPY --from=builder /app/apps/api/src/prisma   ./apps/api/src/prisma
+COPY --from=builder /app/apps/api/package.json ./apps/api/package.json
+
+# Root node_modules
+COPY --from=builder /app/node_modules          ./node_modules
+
+# Client
+COPY --from=builder /app/apps/client/.next/standalone/apps/client/ ./apps/client/
+COPY --from=builder /app/apps/client/.next/standalone/node_modules ./node_modules/
+COPY --from=builder /app/apps/client/.next/static                  ./apps/client/.next/static
+COPY --from=builder /app/apps/client/public                        ./apps/client/public
+
+COPY --from=builder /app/ecosystem.config.js ./
+
+# Rebuild native addons (re2, bcrypt, sharp, @prisma/engines) ให้ตรงกับ runner OS
+RUN npm rebuild re2 bcrypt sharp --prefix /app
+
+EXPOSE 3000 5003
+
+CMD ["pm2-runtime", "ecosystem.config.js"]
