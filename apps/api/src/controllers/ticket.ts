@@ -11,6 +11,7 @@ import { sendTicketCreate } from "../lib/nodemailer/ticket/create";
 import { sendTicketStatus } from "../lib/nodemailer/ticket/status";
 import { assignedNotification } from "../lib/notifications/issue/assigned";
 import { commentNotification } from "../lib/notifications/issue/comment";
+import { createTicketNotification } from "../lib/notifications/issue/create";
 import { priorityNotification } from "../lib/notifications/issue/priority";
 import {
   activeStatusNotification,
@@ -86,6 +87,9 @@ export function ticketRoutes(fastify: FastifyInstance) {
       if (!email && !validateEmail(email)) {
         await sendTicketCreate(ticket);
       }
+      
+      // Notify admins
+      await createTicketNotification(ticket);
 
       if (engineer && engineer.name !== "Unassigned") {
         const assgined = await prisma.user.findUnique({
@@ -190,6 +194,9 @@ export function ticketRoutes(fastify: FastifyInstance) {
       if (!email && !validateEmail(email)) {
         await sendTicketCreate(ticket);
       }
+      
+      // Notify admins
+      await createTicketNotification(ticket);
 
       if (engineer && engineer.name !== "Unassigned") {
         const assgined = await prisma.user.findUnique({

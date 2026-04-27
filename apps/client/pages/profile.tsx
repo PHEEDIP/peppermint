@@ -25,6 +25,9 @@ export default function UserProfile() {
   const [email, setEmail] = useState(user.email);
   const [language, setLanguage] = useState(user.language);
 
+  const [apiKey, setApiKey] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+
   function changeLanguage(locale) {
     setLanguage(locale);
     router.push(router.pathname, router.asPath, {
@@ -48,96 +51,160 @@ export default function UserProfile() {
     });
   }
 
-  return (
-    <div className="flex justify-center items-center h-[70vh]">
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("profile")}</CardTitle>
-          <CardDescription>{t("profile_desc")}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="mt-6 flex flex-col lg:flex-row">
-            <div className="flex-grow space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-foreground">
-                  {t("name")}
-                </label>
-                <div className="mt-1 rounded-md shadow-sm flex">
-                  <input
-                    type="text"
-                    name="name"
-                    id="name"
-                    autoComplete="name"
-                    className="text-foreground bg-background flex-grow block w-full min-w-0 rounded-md sm:text-sm border-gray-300"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                  />
-                </div>
-              </div>
+  async function generateApiKey() {
+    if (!window.confirm("Generating a new API Key will invalidate your old one. Are you sure?")) {
+      return;
+    }
+    
+    setIsGenerating(true);
+    try {
+      const res = await fetch(`/api/v1/auth/apikey`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + token,
+        },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setApiKey(data.token);
+      } else {
+        alert("Failed to generate API Key");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Failed to generate API Key");
+    } finally {
+      setIsGenerating(false);
+    }
+  }
 
-              <div>
-                <label className="block text-sm font-medium text-foreground">
-                  {t("email")}
-                </label>
-                <div className="mt-1 rounded-md shadow-sm flex">
-                  <input
-                    type="email"
-                    name="email"
-                    autoComplete="email"
-                    className="text-foreground bg-background flex-grow block w-full min-w-0 rounded-md sm:text-sm border-gray-300"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                  />
+  return (
+    <div className="flex justify-center items-center h-[90vh]">
+      <div className="flex flex-col space-y-6 w-full max-w-2xl px-4">
+        <Card>
+          <CardHeader>
+            <CardTitle>{t("profile")}</CardTitle>
+            <CardDescription>{t("profile_desc")}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="mt-6 flex flex-col lg:flex-row">
+              <div className="flex-grow space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-foreground">
+                    {t("name")}
+                  </label>
+                  <div className="mt-1 rounded-md shadow-sm flex">
+                    <input
+                      type="text"
+                      name="name"
+                      id="name"
+                      autoComplete="name"
+                      className="text-foreground bg-background flex-grow block w-full min-w-0 rounded-md sm:text-sm border-gray-300"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                    />
+                  </div>
                 </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground">
-                  {t("language")}
-                </label>
-                <div className="mt-1 rounded-md shadow-sm flex">
-                  <select
-                    id="language"
-                    name="language"
-                    className="text-foreground bg-background flex-grow block w-full min-w-0 rounded-md sm:text-sm border-gray-300"
-                    value={language}
-                    onChange={(e) => changeLanguage(e.target.value)}
-                  >
-                    <option value="en">English</option>
-                    <option value="de">German</option>
-                    <option value="se">Swedish</option>
-                    <option value="es">Spanish</option>
-                    <option value="no">Norwegian</option>
-                    <option value="fr">French</option>
-                    <option value="tl">Tagalong</option>
-                    <option value="da">Danish</option>
-                    <option value="pt">Portuguese</option>
-                    <option value="it">Italiano</option>
-                    <option value="he">Hebrew</option>
-                    <option value="tr">Turkish</option>
-                    <option value="hu">Hungarian</option>
-                    <option value="th">Thai (ภาษาไทย)</option>
-                    <option value="zh-CN">Simplified Chinese (简体中文)</option>
-                  </select>
+
+                <div>
+                  <label className="block text-sm font-medium text-foreground">
+                    {t("email")}
+                  </label>
+                  <div className="mt-1 rounded-md shadow-sm flex">
+                    <input
+                      type="email"
+                      name="email"
+                      autoComplete="email"
+                      className="text-foreground bg-background flex-grow block w-full min-w-0 rounded-md sm:text-sm border-gray-300"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-foreground">
+                    {t("language")}
+                  </label>
+                  <div className="mt-1 rounded-md shadow-sm flex">
+                    <select
+                      id="language"
+                      name="language"
+                      className="text-foreground bg-background flex-grow block w-full min-w-0 rounded-md sm:text-sm border-gray-300"
+                      value={language}
+                      onChange={(e) => changeLanguage(e.target.value)}
+                    >
+                      <option value="en">English</option>
+                      <option value="de">German</option>
+                      <option value="se">Swedish</option>
+                      <option value="es">Spanish</option>
+                      <option value="no">Norwegian</option>
+                      <option value="fr">French</option>
+                      <option value="tl">Tagalong</option>
+                      <option value="da">Danish</option>
+                      <option value="pt">Portuguese</option>
+                      <option value="it">Italiano</option>
+                      <option value="he">Hebrew</option>
+                      <option value="tr">Turkish</option>
+                      <option value="hu">Hungarian</option>
+                      <option value="th">Thai (ภาษาไทย)</option>
+                      <option value="zh-CN">Simplified Chinese (简体中文)</option>
+                    </select>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </CardContent>
-        <CardFooter>
-          <div className="flex w-full justify-end">
-            <button
-              onClick={async () => {
-                await updateProfile();
-                router.reload();
-              }}
-              type="submit"
-              className="inline-flex items-center px-4 py-2 border font-semibold border-gray-300 shadow-sm text-xs rounded text-gray-700 bg-white hover:bg-gray-50 "
-            >
-              {t("save_and_reload")}
-            </button>
-          </div>
-        </CardFooter>
-      </Card>
+          </CardContent>
+          <CardFooter>
+            <div className="flex w-full justify-end">
+              <button
+                onClick={async () => {
+                  await updateProfile();
+                  router.reload();
+                }}
+                type="submit"
+                className="inline-flex items-center px-4 py-2 border font-semibold border-gray-300 shadow-sm text-xs rounded text-gray-700 bg-white hover:bg-gray-50 "
+              >
+                {t("save_and_reload")}
+              </button>
+            </div>
+          </CardFooter>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>API Key</CardTitle>
+            <CardDescription>Generate an API key to access Peppermint programmatically. Generating a new key will invalidate any previously generated API key.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {apiKey ? (
+              <div className="mt-2">
+                <label className="block text-sm font-medium text-foreground mb-2">Your New API Key (Copy this now, you won't be able to see it again)</label>
+                <textarea
+                  readOnly
+                  rows={3}
+                  className="w-full text-foreground bg-background block rounded-md sm:text-sm border-gray-300"
+                  value={apiKey}
+                />
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No API key generated yet or hidden for security.</p>
+            )}
+          </CardContent>
+          <CardFooter>
+            <div className="flex w-full justify-end">
+              <button
+                onClick={generateApiKey}
+                disabled={isGenerating}
+                type="button"
+                className="inline-flex items-center px-4 py-2 border font-semibold border-gray-300 shadow-sm text-xs rounded text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+              >
+                {isGenerating ? "Generating..." : "Regenerate API Key"}
+              </button>
+            </div>
+          </CardFooter>
+        </Card>
+      </div>
     </div>
   );
 }

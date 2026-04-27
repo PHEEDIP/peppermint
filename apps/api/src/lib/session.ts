@@ -45,6 +45,7 @@ export async function checkSession(request: FastifyRequest) {
     const currentIp = request.ip;
 
     if (
+      !session.apiKey &&
       session.userAgent !== currentUserAgent &&
       session.ipAddress !== currentIp
     ) {

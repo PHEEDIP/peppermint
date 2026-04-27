@@ -1055,4 +1055,56 @@ export function authRoutes(fastify: FastifyInstance) {
       reply.send({ success: true });
     }
   );
+
+  // Generate / Regenerate API Key
+  fastify.post(
+    "/api/v1/auth/apikey",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const currentUser = await checkSession(request);
+      if (!currentUser) {
+        return reply.code(401).send({ message: "Unauthorized" });
+      }
+
+      // Delete existing API key sessions for the user to support regeneration
+      await prisma.session.deleteMany({
+        where: {
+          userId: currentUser.id,
+          apiKey: true,
+        },
+      });
+
+      // Generate a secure API Key token (10 years)
+      var secret = Buffer.from(process.env.SECRET!, "base64");
+      const token = jwt.sign(
+        {
+          data: {
+            id: currentUser.id,
+            sessionId: crypto.randomBytes(32).toString("hex"),
+            apiKey: true,
+          },
+        },
+        secret,
+        {
+          expiresIn: "3650d",
+          algorithm: "HS256",
+        }
+      );
+
+      // Store API Key session
+      await prisma.session.create({
+        data: {
+          userId: currentUser.id,
+          sessionToken: token,
+          expires: new Date(Date.now() + 3650 * 24 * 60 * 60 * 1000), // 10 years
+          userAgent: request.headers["user-agent"] || "",
+          ipAddress: request.ip,
+          apiKey: true,
+        },
+      });
+
+      await tracking("api_key_generated", { userId: currentUser.id });
+
+      reply.send({ success: true, token });
+    }
+  );
 }
