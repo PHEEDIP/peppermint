@@ -1,4 +1,4 @@
-FROM node:18-slim AS builder
+FROM node:22-slim AS builder
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends openssl python3 make g++ && \
@@ -22,7 +22,7 @@ RUN cd apps/api && yarn build
 RUN cd apps/client && yarn build
 
 # ── Runner ────────────────────────────────────────────────────
-FROM node:18-slim AS runner
+FROM node:22-slim AS runner
 
 # ต้องมี build tools ใน runner ด้วย เพราะต้อง rebuild native addons
 RUN apt-get update && \

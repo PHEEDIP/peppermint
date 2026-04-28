@@ -1,28 +1,44 @@
 //@ts-nocheck
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import multer from "fastify-multer";
 import { prisma } from "../prisma";
-const upload = multer({ dest: "uploads/" });
+import fs from "fs";
+import util from "util";
+import { pipeline } from "stream";
+import path from "path";
+const pump = util.promisify(pipeline);
 
 export function objectStoreRoutes(fastify: FastifyInstance) {
   //
   fastify.post(
     "/api/v1/storage/ticket/:id/upload/single",
-    { preHandler: upload.single("file") },
-
     async (request: FastifyRequest, reply: FastifyReply) => {
-      console.log(request.file);
-      console.log(request.body);
+      const data = await request.file();
+      
+      if (!data) {
+        return reply.status(400).send({ success: false, message: "No file uploaded" });
+      }
+
+      if (!fs.existsSync("uploads/")) {
+        fs.mkdirSync("uploads/", { recursive: true });
+      }
+
+      const destFilename = `${Date.now()}-${data.filename}`;
+      const destPath = path.join("uploads", destFilename);
+      
+      await pump(data.file, fs.createWriteStream(destPath));
+      const stats = fs.statSync(destPath);
+      
+      const userId = data.fields.user ? data.fields.user.value : undefined;
 
       const uploadedFile = await prisma.ticketFile.create({
         data: {
           ticketId: request.params.id,
-          filename: request.file.originalname,
-          path: request.file.path,
-          mime: request.file.mimetype,
-          size: request.file.size,
-          encoding: request.file.encoding,
-          userId: request.body.user,
+          filename: data.filename,
+          path: destPath,
+          mime: data.mimetype,
+          size: stats.size,
+          encoding: data.encoding,
+          userId: userId,
         },
       });
 

@@ -1,7 +1,6 @@
 import cors from "@fastify/cors";
 import "dotenv/config";
 import Fastify, { FastifyInstance } from "fastify";
-import multer from "fastify-multer";
 import fs from "fs";
 
 import { exec } from "child_process";
@@ -31,8 +30,9 @@ server.register(cors, {
   methods: ["GET", "POST", "PUT", "DELETE"],
   allowedHeaders: ["Content-Type", "Authorization", "Accept"],
 });
+import multipart from "@fastify/multipart";
 
-server.register(multer.contentParser);
+server.register(multipart);
 
 registerRoutes(server);
 
@@ -120,7 +120,7 @@ const start = async () => {
 
     server.listen(
       { port: Number(port), host: "0.0.0.0" },
-      async (err, address) => {
+      (err, address) => {
         if (err) {
           console.error(err);
           process.exit(1);
