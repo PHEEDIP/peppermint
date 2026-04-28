@@ -11,6 +11,13 @@ import { track } from "../lib/hog";
 import { forgotPassword } from "../lib/nodemailer/auth/forgot-password";
 import { requirePermission } from "../lib/roles";
 import { checkSession } from "../lib/session";
+import {
+  buildSetupArtifacts,
+  consumeBackupCode,
+  generateBackupCodes,
+  hashBackupCodes,
+  verifyTotpToken,
+} from "../lib/two-factor";
 import { getOAuthClient } from "../lib/utils/oauth_client";
 import { getOidcClient } from "../lib/utils/oidc_client";
 import { prisma } from "../prisma";
@@ -55,6 +62,111 @@ async function tracking(event: string, properties: any) {
     properties: properties,
     distinctId: "uuid",
   });
+}
+
+type SetupTokenMode = "login" | "settings";
+
+type TemporarySetupTokenPayload = {
+  type: "2fa-setup";
+  userId: string;
+  secret: string;
+  mode: SetupTokenMode;
+};
+
+type TemporaryLoginTokenPayload = {
+  type: "2fa-login";
+  userId: string;
+  userAgent: string;
+  ipAddress: string;
+};
+
+function getJwtSecret() {
+  return Buffer.from(process.env.SECRET!, "base64");
+}
+
+function createSessionToken(userId: string) {
+  return jwt.sign(
+    {
+      data: {
+        id: userId,
+        sessionId: crypto.randomBytes(32).toString("hex"),
+      },
+    },
+    getJwtSecret(),
+    {
+      expiresIn: "8h",
+      algorithm: "HS256",
+    }
+  );
+}
+
+async function persistSession(
+  userId: string,
+  token: string,
+  userAgent: string,
+  ipAddress: string
+) {
+  await prisma.session.create({
+    data: {
+      userId,
+      sessionToken: token,
+      expires: new Date(Date.now() + 8 * 60 * 60 * 1000),
+      userAgent,
+      ipAddress,
+    },
+  });
+}
+
+function buildUserAuthPayload(user: {
+  id: string;
+  email: string;
+  name: string;
+  isAdmin: boolean;
+  language: string | null;
+  notify_ticket_created: boolean;
+  notify_ticket_status_changed: boolean;
+  notify_ticket_comments: boolean;
+  notify_ticket_assigned: boolean;
+  firstLogin: boolean;
+  external_user: boolean;
+  isTwoFactorEnabled: boolean;
+}) {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    isAdmin: user.isAdmin,
+    language: user.language,
+    ticket_created: user.notify_ticket_created,
+    ticket_status_changed: user.notify_ticket_status_changed,
+    ticket_comments: user.notify_ticket_comments,
+    ticket_assigned: user.notify_ticket_assigned,
+    firstLogin: user.firstLogin,
+    external_user: user.external_user,
+    isTwoFactorEnabled: user.isTwoFactorEnabled,
+  };
+}
+
+function signTemporaryToken(
+  payload: TemporarySetupTokenPayload | TemporaryLoginTokenPayload,
+  expiresIn = "10m"
+) {
+  return jwt.sign(payload, getJwtSecret(), {
+    expiresIn,
+    algorithm: "HS256",
+  });
+}
+
+function verifyTemporaryToken<T>(token: string, expectedType: string): T | null {
+  try {
+    const payload = jwt.verify(token, getJwtSecret()) as any;
+    if (!payload || payload.type !== expectedType) {
+      return null;
+    }
+    return payload as T;
+  } catch (error) {
+    return null;
+  }
 }
 
 export function authRoutes(fastify: FastifyInstance) {
@@ -322,53 +434,421 @@ export function authRoutes(fastify: FastifyInstance) {
         throw new Error("Password is not valid");
       }
 
-      // Generate a secure session token
-      var secret = Buffer.from(process.env.SECRET!, "base64");
-      const token = jwt.sign(
-        {
-          data: {
-            id: user!.id,
-            // Add a unique identifier for this session
-            sessionId: crypto.randomBytes(32).toString("hex"),
-          },
-        },
-        secret,
-        {
-          expiresIn: "8h",
-          algorithm: "HS256",
-        }
+      const userAgent = request.headers["user-agent"] || "";
+      const ipAddress = request.ip;
+
+      if (user.isTwoFactorEnabled && user.twoFactorSecret) {
+        const loginChallengeToken = signTemporaryToken({
+          type: "2fa-login",
+          userId: user.id,
+          userAgent,
+          ipAddress,
+        });
+
+        return reply.send({
+          success: true,
+          twoFactorRequired: true,
+          loginChallengeToken,
+        });
+      }
+
+      const setupArtifacts = await buildSetupArtifacts(user.email);
+      const setupToken = signTemporaryToken({
+        type: "2fa-setup",
+        userId: user.id,
+        secret: setupArtifacts.secret,
+        mode: "login",
+      });
+
+      return reply.send({
+        success: true,
+        twoFactorSetupRequired: true,
+        setupToken,
+        qrCodeDataUrl: setupArtifacts.qrCodeDataUrl,
+        otpauthUrl: setupArtifacts.otpauthUrl,
+      });
+    }
+  );
+
+  fastify.post(
+    "/api/v1/auth/login/2fa/verify",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { loginChallengeToken, code, backupCode } = request.body as {
+        loginChallengeToken: string;
+        code?: string;
+        backupCode?: string;
+      };
+
+      const challenge = verifyTemporaryToken<TemporaryLoginTokenPayload>(
+        loginChallengeToken,
+        "2fa-login"
       );
 
-      // Store session with additional security info
-      await prisma.session.create({
+      if (!challenge) {
+        return reply.code(401).send({
+          success: false,
+          message: "Invalid or expired 2FA challenge",
+        });
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: challenge.userId },
+      });
+
+      if (!user || !user.isTwoFactorEnabled || !user.twoFactorSecret) {
+        return reply.code(401).send({
+          success: false,
+          message: "2FA is not enabled for this account",
+        });
+      }
+
+      const currentUserAgent = request.headers["user-agent"] || "";
+      if (challenge.userAgent && challenge.userAgent !== currentUserAgent) {
+        return reply.code(401).send({
+          success: false,
+          message: "Client mismatch",
+        });
+      }
+
+      let isVerified = false;
+
+      if (code) {
+        isVerified = verifyTotpToken(user.twoFactorSecret, code);
+      }
+
+      if (!isVerified && backupCode) {
+        const consumeResult = await consumeBackupCode(
+          user.twoFactorBackupCodes,
+          backupCode
+        );
+
+        if (consumeResult.consumed) {
+          isVerified = true;
+          await prisma.user.update({
+            where: { id: user.id },
+            data: {
+              twoFactorBackupCodes: consumeResult.remaining,
+            },
+          });
+        }
+      }
+
+      if (!isVerified) {
+        await tracking("user_login_2fa_failed", { userId: user.id });
+        return reply.code(401).send({
+          success: false,
+          message: "Invalid 2FA code",
+        });
+      }
+
+      const token = createSessionToken(user.id);
+      await persistSession(user.id, token, currentUserAgent, request.ip);
+      await tracking("user_logged_in_password", { userId: user.id, twoFactor: true });
+
+      return reply.send({
+        success: true,
+        token,
+        user: buildUserAuthPayload(user),
+      });
+    }
+  );
+
+  fastify.post(
+    "/api/v1/auth/login/2fa/enable",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { setupToken, code } = request.body as {
+        setupToken: string;
+        code: string;
+      };
+
+      const setupPayload = verifyTemporaryToken<TemporarySetupTokenPayload>(
+        setupToken,
+        "2fa-setup"
+      );
+
+      if (!setupPayload || setupPayload.mode !== "login") {
+        return reply.code(401).send({
+          success: false,
+          message: "Invalid or expired setup token",
+        });
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: setupPayload.userId },
+      });
+
+      if (!user) {
+        return reply.code(404).send({ success: false, message: "User not found" });
+      }
+
+      if (!verifyTotpToken(setupPayload.secret, code)) {
+        return reply.code(401).send({
+          success: false,
+          message: "Invalid 2FA code",
+        });
+      }
+
+      const backupCodes = generateBackupCodes();
+      const backupCodeHashes = await hashBackupCodes(backupCodes);
+
+      const updatedUser = await prisma.user.update({
+        where: { id: user.id },
         data: {
-          userId: user!.id,
-          sessionToken: token,
-          expires: new Date(Date.now() + 8 * 60 * 60 * 1000), // 8 hours
-          userAgent: request.headers["user-agent"] || "",
-          ipAddress: request.ip,
+          twoFactorSecret: setupPayload.secret,
+          isTwoFactorEnabled: true,
+          twoFactorBackupCodes: backupCodeHashes,
+          twoFactorBackupCodesIssuedAt: new Date(),
         },
       });
 
-      await tracking("user_logged_in_password", {});
+      const token = createSessionToken(updatedUser.id);
+      await persistSession(
+        updatedUser.id,
+        token,
+        request.headers["user-agent"] || "",
+        request.ip
+      );
 
-      const data = {
-        id: user!.id,
-        email: user!.email,
-        name: user!.name,
-        isAdmin: user!.isAdmin,
-        language: user!.language,
-        ticket_created: user!.notify_ticket_created,
-        ticket_status_changed: user!.notify_ticket_status_changed,
-        ticket_comments: user!.notify_ticket_comments,
-        ticket_assigned: user!.notify_ticket_assigned,
-        firstLogin: user!.firstLogin,
-        external_user: user!.external_user,
+      await tracking("user_2fa_enabled", { userId: updatedUser.id, mode: "login" });
+
+      return reply.send({
+        success: true,
+        token,
+        user: buildUserAuthPayload(updatedUser),
+        backupCodes,
+      });
+    }
+  );
+
+  fastify.post(
+    "/api/v1/auth/2fa/setup",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const currentUser = await checkSession(request);
+      if (!currentUser) {
+        return reply.code(401).send({ success: false, message: "Unauthorized" });
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: currentUser.id },
+      });
+
+      if (!user) {
+        return reply.code(404).send({ success: false, message: "User not found" });
+      }
+
+      if (user.isTwoFactorEnabled) {
+        return reply.code(400).send({
+          success: false,
+          message: "2FA is already enabled",
+        });
+      }
+
+      const setupArtifacts = await buildSetupArtifacts(user.email);
+      const setupToken = signTemporaryToken({
+        type: "2fa-setup",
+        userId: user.id,
+        secret: setupArtifacts.secret,
+        mode: "settings",
+      });
+
+      return reply.send({
+        success: true,
+        setupToken,
+        otpauthUrl: setupArtifacts.otpauthUrl,
+        qrCodeDataUrl: setupArtifacts.qrCodeDataUrl,
+      });
+    }
+  );
+
+  fastify.post(
+    "/api/v1/auth/2fa/enable",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const currentUser = await checkSession(request);
+      if (!currentUser) {
+        return reply.code(401).send({ success: false, message: "Unauthorized" });
+      }
+
+      const { setupToken, code } = request.body as {
+        setupToken: string;
+        code: string;
       };
 
-      reply.send({
-        token,
-        user: data,
+      const setupPayload = verifyTemporaryToken<TemporarySetupTokenPayload>(
+        setupToken,
+        "2fa-setup"
+      );
+
+      if (!setupPayload || setupPayload.mode !== "settings") {
+        return reply.code(401).send({
+          success: false,
+          message: "Invalid or expired setup token",
+        });
+      }
+
+      if (setupPayload.userId !== currentUser.id) {
+        return reply.code(403).send({ success: false, message: "Forbidden" });
+      }
+
+      if (!verifyTotpToken(setupPayload.secret, code)) {
+        return reply.code(401).send({
+          success: false,
+          message: "Invalid 2FA code",
+        });
+      }
+
+      const backupCodes = generateBackupCodes();
+      const backupCodeHashes = await hashBackupCodes(backupCodes);
+
+      await prisma.user.update({
+        where: { id: currentUser.id },
+        data: {
+          twoFactorSecret: setupPayload.secret,
+          isTwoFactorEnabled: true,
+          twoFactorBackupCodes: backupCodeHashes,
+          twoFactorBackupCodesIssuedAt: new Date(),
+        },
+      });
+
+      await tracking("user_2fa_enabled", { userId: currentUser.id, mode: "settings" });
+
+      return reply.send({
+        success: true,
+        backupCodes,
+      });
+    }
+  );
+
+  fastify.post(
+    "/api/v1/auth/2fa/disable",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const currentUser = await checkSession(request);
+      if (!currentUser) {
+        return reply.code(401).send({ success: false, message: "Unauthorized" });
+      }
+
+      const { code, backupCode } = request.body as {
+        code?: string;
+        backupCode?: string;
+      };
+
+      const user = await prisma.user.findUnique({
+        where: { id: currentUser.id },
+      });
+
+      if (!user || !user.isTwoFactorEnabled || !user.twoFactorSecret) {
+        return reply.code(400).send({
+          success: false,
+          message: "2FA is not enabled",
+        });
+      }
+
+      let canDisable = false;
+
+      if (code) {
+        canDisable = verifyTotpToken(user.twoFactorSecret, code);
+      }
+
+      if (!canDisable && backupCode) {
+        const consumeResult = await consumeBackupCode(
+          user.twoFactorBackupCodes,
+          backupCode
+        );
+
+        if (consumeResult.consumed) {
+          canDisable = true;
+        }
+      }
+
+      if (!canDisable) {
+        return reply.code(401).send({
+          success: false,
+          message: "Invalid 2FA code",
+        });
+      }
+
+      await prisma.user.update({
+        where: { id: currentUser.id },
+        data: {
+          isTwoFactorEnabled: false,
+          twoFactorSecret: null,
+          twoFactorBackupCodes: [],
+          twoFactorBackupCodesIssuedAt: null,
+        },
+      });
+
+      await tracking("user_2fa_disabled", { userId: currentUser.id });
+
+      return reply.send({ success: true });
+    }
+  );
+
+  fastify.post(
+    "/api/v1/auth/2fa/backup-codes/regenerate",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const currentUser = await checkSession(request);
+      if (!currentUser) {
+        return reply.code(401).send({ success: false, message: "Unauthorized" });
+      }
+
+      const { code, backupCode } = request.body as {
+        code?: string;
+        backupCode?: string;
+      };
+
+      const user = await prisma.user.findUnique({
+        where: { id: currentUser.id },
+      });
+
+      if (!user || !user.isTwoFactorEnabled || !user.twoFactorSecret) {
+        return reply.code(400).send({
+          success: false,
+          message: "2FA is not enabled",
+        });
+      }
+
+      let canRegenerate = false;
+      let remainingBackupCodes = user.twoFactorBackupCodes;
+
+      if (code) {
+        canRegenerate = verifyTotpToken(user.twoFactorSecret, code);
+      }
+
+      if (!canRegenerate && backupCode) {
+        const consumeResult = await consumeBackupCode(
+          user.twoFactorBackupCodes,
+          backupCode
+        );
+        canRegenerate = consumeResult.consumed;
+        remainingBackupCodes = consumeResult.remaining;
+      }
+
+      if (!canRegenerate) {
+        return reply.code(401).send({
+          success: false,
+          message: "Invalid 2FA code",
+        });
+      }
+
+      const freshCodes = generateBackupCodes();
+      const freshCodeHashes = await hashBackupCodes(freshCodes);
+
+      await prisma.user.update({
+        where: { id: currentUser.id },
+        data: {
+          twoFactorBackupCodes: freshCodeHashes,
+          twoFactorBackupCodesIssuedAt: new Date(),
+        },
+      });
+
+      await tracking("user_2fa_backup_codes_regenerated", {
+        userId: currentUser.id,
+        usedBackupCode: !!backupCode,
+        remainingBackupCodesBeforeRegen: remainingBackupCodes.length,
+      });
+
+      return reply.send({
+        success: true,
+        backupCodes: freshCodes,
       });
     }
   );
@@ -787,6 +1267,8 @@ export function authRoutes(fastify: FastifyInstance) {
         version: config!.client_version,
         notifcations,
         external_user: user!.external_user,
+        isTwoFactorEnabled: user!.isTwoFactorEnabled,
+        twoFactorBackupCodesIssuedAt: user!.twoFactorBackupCodesIssuedAt,
       };
 
       await tracking("user_profile", {});
@@ -987,6 +1469,18 @@ export function authRoutes(fastify: FastifyInstance) {
     "/api/v1/auth/user/:id/first-login",
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { id } = request.params as { id: string };
+
+      const currentUser = await checkSession(request);
+      if (!currentUser || currentUser.id !== id) {
+        return reply.code(401).send({ success: false, message: "Unauthorized" });
+      }
+
+      if (currentUser.password && !currentUser.isTwoFactorEnabled) {
+        return reply.code(400).send({
+          success: false,
+          message: "Two-factor authentication must be enabled before continuing",
+        });
+      }
 
       await prisma.user.update({
         where: { id },

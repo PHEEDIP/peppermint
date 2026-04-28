@@ -1,0 +1,6 @@
+-- Add TOTP-based 2FA fields to User
+ALTER TABLE "User"
+ADD COLUMN IF NOT EXISTS "twoFactorSecret" TEXT,
+ADD COLUMN IF NOT EXISTS "isTwoFactorEnabled" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN IF NOT EXISTS "twoFactorBackupCodes" TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
+ADD COLUMN IF NOT EXISTS "twoFactorBackupCodesIssuedAt" TIMESTAMP(3);

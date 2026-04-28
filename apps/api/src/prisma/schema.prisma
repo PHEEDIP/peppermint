@@ -80,6 +80,10 @@ model User {
   name                         String
   password                     String?
   email                        String    @unique
+  twoFactorSecret              String?
+  isTwoFactorEnabled           Boolean   @default(false)
+  twoFactorBackupCodes         String[]  @default([])
+  twoFactorBackupCodesIssuedAt DateTime?
   image                        String?
   emailVerified                Boolean?
   isAdmin                      Boolean   @default(false)

@@ -88,5 +88,9 @@
   "in_progress": "In Progress",
   "in_review": "In Review",
   "done": "Done",
-  "select_new_user": "Select new user"
+  "select_new_user": "Select new user",
+  "two_factor_authentication": "Two-factor authentication",
+  "two_factor_enabled": "Two-factor authentication is enabled",
+  "two_factor_disabled": "Two-factor authentication is disabled",
+  "backup_codes": "Backup codes"
 }

@@ -60,9 +60,30 @@ server.get(
 // JWT authentication hook
 server.addHook("preHandler", async function (request: any, reply: any) {
   try {
-    if (request.url === "/api/v1/auth/login" && request.method === "POST") {
+    const publicAuthRoutes = new Set([
+      "/api/v1/auth/login",
+      "/api/v1/auth/login/2fa/verify",
+      "/api/v1/auth/login/2fa/enable",
+      "/api/v1/auth/check",
+      "/api/v1/auth/oidc/callback",
+      "/api/v1/auth/oauth/callback",
+      "/api/v1/auth/password-reset",
+      "/api/v1/auth/password-reset/code",
+      "/api/v1/auth/password-reset/password",
+      "/api/v1/auth/user/register/external",
+    ]);
+
+    if (request.method === "POST" && publicAuthRoutes.has(request.url)) {
       return true;
     }
+
+    if (
+      (request.method === "GET" || request.method === "POST") &&
+      publicAuthRoutes.has(request.url)
+    ) {
+      return true;
+    }
+
     if (
       request.url === "/api/v1/ticket/public/create" &&
       request.method === "POST"
