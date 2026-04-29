@@ -81,7 +81,7 @@ export default function Settings({ children }) {
                     )}
                   >
                     <ShieldCheck className="flex-shrink-0  h-5 w-5 text-foreground" />
-                    <span>Two-Factor Authentication</span>
+                    <span>{t("two_factor_authentication")}</span>
                   </Link>
                 </nav>
               </aside>

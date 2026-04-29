@@ -2,10 +2,12 @@ import { toast } from "@/shadcn/hooks/use-toast";
 import { setCookie } from "cookies-next";
 import Link from "next/link";
 import { useRouter } from "next/router";
+import useTranslation from "next-translate/useTranslation";
 import { useEffect, useState } from "react";
 
 export default function Login({}) {
   const router = useRouter();
+  const { t } = useTranslation("peppermint");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -62,8 +64,8 @@ export default function Login({}) {
             setTotpCode("");
             setStep("setup");
             toast({
-              title: "Two-factor authentication required",
-              description: "Set up your authenticator app to continue.",
+              title: t("two_factor_authentication_required"),
+              description: t("two_factor_setup_prompt"),
             });
             return;
           }
@@ -109,8 +111,8 @@ export default function Login({}) {
       if (!res.success || !res.token || !res.user) {
         toast({
           variant: "destructive",
-          title: "Invalid code",
-          description: "Please verify your 2FA code and try again.",
+          title: t("two_factor_invalid_code_title"),
+          description: t("two_factor_invalid_code_description"),
         });
         return;
       }
@@ -120,7 +122,7 @@ export default function Login({}) {
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Unable to verify 2FA. Please try again.",
+        description: t("two_factor_verify_error_description"),
       });
     } finally {
       setStatus("idle");
@@ -139,19 +141,19 @@ export default function Login({}) {
       if (!res.success || !res.token || !res.user) {
         toast({
           variant: "destructive",
-          title: "Invalid code",
-          description: "Could not enable 2FA. Please check your code.",
+          title: t("two_factor_invalid_code_title"),
+          description: t("two_factor_enable_error_description"),
         });
         return;
       }
 
       toast({
-        title: "2FA enabled",
-        description: "Save your backup codes in a secure place.",
+        title: t("two_factor_enabled"),
+        description: t("two_factor_save_backup_codes"),
       });
 
       if (res.backupCodes?.length) {
-        alert(`Backup codes:\n\n${res.backupCodes.join("\n")}`);
+        alert(`${t("two_factor_backup_codes_alert")}\n\n${res.backupCodes.join("\n")}`);
       }
 
       handleLoginSuccess(res.user, res.token);
@@ -159,7 +161,7 @@ export default function Login({}) {
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Unable to complete 2FA setup. Please try again.",
+        description: t("two_factor_setup_complete_error_description"),
       });
     } finally {
       setStatus("idle");
@@ -198,7 +200,7 @@ export default function Login({}) {
     <div className="min-h-screen bg-background flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <h2 className="mt-6 text-center text-3xl font-extrabold text-foreground">
-          Welcome to Peppermint
+          APP ISSUE
         </h2>
       </div>
 
@@ -276,7 +278,7 @@ export default function Login({}) {
                     onClick={postData}
                     className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
                   >
-                    Sign In
+                    เข้าระบบ
                   </button>
 
                   {url && (
@@ -295,10 +297,10 @@ export default function Login({}) {
             {step === "verify" && (
               <div className="space-y-4">
                 <h3 className="text-lg font-semibold text-foreground">
-                  Two-factor authentication
+                  {t("two_factor_authentication")}
                 </h3>
                 <p className="text-sm text-foreground">
-                  Enter the code from your authenticator app to continue.
+                  {t("two_factor_enter_authenticator_code")}
                 </p>
 
                 {!useBackupCode ? (
@@ -306,7 +308,7 @@ export default function Login({}) {
                     type="text"
                     value={totpCode}
                     onChange={(e) => setTotpCode(e.target.value)}
-                    placeholder="123456"
+                    placeholder={t("two_factor_code_placeholder")}
                     className="appearance-none block w-full px-3 py-2 border text-gray-900 border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm"
                   />
                 ) : (
@@ -314,7 +316,7 @@ export default function Login({}) {
                     type="text"
                     value={backupCode}
                     onChange={(e) => setBackupCode(e.target.value)}
-                    placeholder="Backup code"
+                    placeholder={t("two_factor_backup_code_placeholder")}
                     className="appearance-none block w-full px-3 py-2 border text-gray-900 border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm"
                   />
                 )}
@@ -325,8 +327,8 @@ export default function Login({}) {
                   onClick={() => setUseBackupCode(!useBackupCode)}
                 >
                   {useBackupCode
-                    ? "Use authenticator code instead"
-                    : "Use backup code instead"}
+                    ? t("two_factor_use_authenticator_instead")
+                    : t("two_factor_use_backup_instead")}
                 </button>
 
                 <div className="flex gap-3">
@@ -338,14 +340,14 @@ export default function Login({}) {
                     }}
                     className="w-full py-2 px-4 border rounded-md text-sm font-medium"
                   >
-                    Back
+                    {t("two_factor_back")}
                   </button>
                   <button
                     type="button"
                     onClick={verifyTwoFactorCode}
                     className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700"
                   >
-                    Verify
+                    {t("two_factor_verify")}
                   </button>
                 </div>
               </div>
@@ -354,16 +356,19 @@ export default function Login({}) {
             {step === "setup" && (
               <div className="space-y-4">
                 <h3 className="text-lg font-semibold text-foreground">
-                  Set up two-factor authentication
+                  {t("two_factor_setup_title")}
                 </h3>
                 <p className="text-sm text-foreground">
-                  Scan this QR code with Google Authenticator or Authy, then
-                  enter the 6-digit code.
+                  {t("two_factor_setup_instructions")}
                 </p>
 
                 {qrCodeDataUrl ? (
                   <div className="w-full flex justify-center">
-                    <img src={qrCodeDataUrl} alt="2FA QR code" className="h-48 w-48" />
+                    <img
+                      src={qrCodeDataUrl}
+                      alt={t("two_factor_qr_alt")}
+                      className="h-48 w-48"
+                    />
                   </div>
                 ) : null}
 
@@ -371,7 +376,7 @@ export default function Login({}) {
                   type="text"
                   value={totpCode}
                   onChange={(e) => setTotpCode(e.target.value)}
-                  placeholder="123456"
+                  placeholder={t("two_factor_code_placeholder")}
                   className="appearance-none block w-full px-3 py-2 border text-gray-900 border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm"
                 />
 
@@ -380,25 +385,12 @@ export default function Login({}) {
                   onClick={completeTwoFactorSetup}
                   className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700"
                 >
-                  Enable 2FA and Continue
+                  {t("two_factor_enable_and_continue")}
                 </button>
               </div>
             )}
           </div>
         )}
-
-        <div className="mt-8 text-center flex flex-col space-y-2">
-          <span className="font-bold text-foreground">
-            Built with 💚 by Peppermint Labs
-          </span>
-          <a
-            href="https://docs.peppermint.sh/"
-            target="_blank"
-            className="text-foreground"
-          >
-            Documentation
-          </a>
-        </div>
       </div>
     </div>
   );

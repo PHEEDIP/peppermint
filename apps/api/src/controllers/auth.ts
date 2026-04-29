@@ -71,6 +71,8 @@ type TemporarySetupTokenPayload = {
   userId: string;
   secret: string;
   mode: SetupTokenMode;
+  userAgent?: string;
+  ipAddress?: string;
 };
 
 type TemporaryLoginTokenPayload = {
@@ -458,6 +460,8 @@ export function authRoutes(fastify: FastifyInstance) {
         userId: user.id,
         secret: setupArtifacts.secret,
         mode: "login",
+        userAgent,
+        ipAddress,
       });
 
       return reply.send({
@@ -573,6 +577,24 @@ export function authRoutes(fastify: FastifyInstance) {
         });
       }
 
+      const currentUserAgent = request.headers["user-agent"] || "";
+      if (
+        setupPayload.userAgent &&
+        setupPayload.userAgent !== currentUserAgent
+      ) {
+        return reply.code(401).send({
+          success: false,
+          message: "Client mismatch",
+        });
+      }
+
+      if (setupPayload.ipAddress && setupPayload.ipAddress !== request.ip) {
+        return reply.code(401).send({
+          success: false,
+          message: "Client mismatch",
+        });
+      }
+
       const user = await prisma.user.findUnique({
         where: { id: setupPayload.userId },
       });
@@ -605,7 +627,7 @@ export function authRoutes(fastify: FastifyInstance) {
       await persistSession(
         updatedUser.id,
         token,
-        request.headers["user-agent"] || "",
+        currentUserAgent,
         request.ip
       );
 
